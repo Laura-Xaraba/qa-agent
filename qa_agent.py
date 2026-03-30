@@ -1,11 +1,31 @@
 from google import genai
 import os
+from datetime import datetime
+
+# File Resistence
+def save_report(report_text):
+    """Saves the generated report to a markdown file."""
+    folder = "bug_reports"
+    if not os.path.exists(folder):
+        os.makedirs(folder)
+    
+    timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+    filename = f"bug_report_{timestamp}.md"
+    filepath = os.path.join(folder, filename)
+    
+    try:
+        with open(filepath, "w", encoding="utf-8") as file:
+            file.write(report_text)
+        return filepath
+    except Exception as e:
+        print(f"⚠️ Failed to save file: {e}")
+        return None
 
 # Configurations
 API_KEY = os.getenv("GEMINI_API_KEY")
-MODEL_NAME = "gemini-2.0-flash-lite"
+# List of models for fallback (resilience)
+MODELS_PRIORITY = ["gemini-2.0-flash-lite", "gemini-1.5-flash", "gemini-1.5-flash-8b"]
 
-# System Instruction 
 SYSTEM_INSTRUCTION = """
 You are a Senior QA Analyst Agent specialized in bug triaging.
 Your task is to receive informal bug descriptions and transform them into professional Bug Reports.
@@ -18,6 +38,7 @@ Output Format (Markdown):
 - **Possible Root Cause**: (Technical hypothesis)
 """
 
+# Core Functions
 def initialize_agent():
     """Initializes the GenAI Client with security checks."""
     if not API_KEY:
@@ -28,15 +49,21 @@ def generate_bug_report(client, raw_content):
     """Processes the raw input and returns a structured report."""
     config = {'system_instruction': SYSTEM_INSTRUCTION}
 
-    try:
-        response = client.models.generate_content(
-            model=MODEL_NAME,
-            config=config,
-            contents=raw_content
-        )
-        return response.text
-    except Exception as e:
-        return f"Error processing report: {str(e)}"
+    for model_name in MODELS_PRIORITY:
+        try:
+            print(f"🤖 Trying model: {model_name}...")
+            response = client.models.generate_content(
+                model=model_name,
+                config=config,
+                contents=raw_content
+            )
+            return response.text, model_name
+        
+        except Exception as e:
+            print(f"⚠️ {model_name} failed. Moving to next candidate...")
+            continue
+    
+    return "All AI models are currently unavaliable. Please try again later.", "None"
     
 # Main Execution Loop
 def main():
@@ -57,10 +84,21 @@ def main():
                 continue
 
             print("Analyzing and structuring data...")
-            report = generate_bug_report(client, user_input)
+            report, model_used = generate_bug_report(client, user_input)
 
-            print("\n--- GENERATED BUG REPORT ---")
-            print(report)
+            if model_used != "None":
+                print(f"✅ Generated successfully using: {model_used}")
+                print("\n--- GENERATED BUG REPORT ---")
+                print(report)
+                print("=" * 50)
+
+                path = save_report(report)
+                if path:
+                    print(f"Report saved to: {path}")
+                
+            else:
+                print(f"\n❌ {report}")
+
             print("=" * 50)
 
     except Exception as error:
